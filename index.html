@@ -442,44 +442,20 @@
 
 
 
-  /* DROPDOWN GRUPOS */
-  .grupo-dropdown { margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  .grupo-header {
-    display: flex; align-items: center; gap: 8px;
-    padding: 9px 12px; cursor: pointer;
-    background: var(--surface2);
-    transition: background 0.15s;
-    user-select: none;
-  }
+  .grupo-dropdown { margin-bottom: 6px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .grupo-header { display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;background:var(--surface2);transition:background 0.15s;user-select:none; }
   .grupo-header:hover { background: var(--border); }
-  .grupo-header-icon { font-size: 15px; }
-  .grupo-header-label { flex: 1; font-size: 11px; color: var(--text); text-transform: uppercase; letter-spacing: 0.6px; }
-  .grupo-header-count { font-size: 10px; color: var(--muted); margin-right: 4px; }
-  .grupo-arrow { font-size: 10px; color: var(--muted); transition: transform 0.2s; }
-  .grupo-arrow.open { transform: rotate(180deg); }
-  .grupo-body { display: none; padding: 4px 0; background: var(--surface); }
-  .grupo-body.open { display: block; }
-
-  /* MARCADORES ROTA */
-  .rota-origin-marker {
-    width: 14px; height: 14px;
-    background: #a78bfa;
-    border-radius: 50%;
-    border: 2px solid white;
-    box-shadow: 0 0 8px rgba(167,139,250,0.7);
-  }
-  .rota-dest-marker {
-    width: 14px; height: 14px;
-    background: #10b981;
-    border-radius: 50%;
-    border: 2px solid white;
-    box-shadow: 0 0 8px rgba(16,185,129,0.7);
-  }
-
-  /* PARAGENS TUB com rota */
-  .paragem-item { padding: 7px 12px; }
-  .paragem-item .rota-btns { margin-left: auto; }
-
+  .grupo-header-icon { font-size:15px; }
+  .grupo-header-label { flex:1;font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:0.6px; }
+  .grupo-header-count { font-size:10px;color:var(--muted);margin-right:4px; }
+  .grupo-arrow { font-size:10px;color:var(--muted);transition:transform 0.2s; }
+  .grupo-arrow.open { transform:rotate(180deg); }
+  .grupo-body { display:none;background:var(--surface); }
+  .grupo-body.open { display:block; }
+  .rota-origin-dot { width:12px;height:12px;background:#a78bfa;border-radius:50%;border:2px solid white;box-shadow:0 0 8px rgba(167,139,250,0.8); }
+  .rota-dest-dot { width:12px;height:12px;background:#10b981;border-radius:50%;border:2px solid white;box-shadow:0 0 8px rgba(16,185,129,0.8); }
+  .paragem-row { display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid rgba(42,45,53,0.4); }
+  .paragem-row:last-child { border-bottom:none; }
 </style>
 </head>
 <body>
@@ -530,6 +506,116 @@ const PARAGENS_DATA = {"type":"FeatureCollection","features":[{"type":"Feature",
 
 </script>
 <script>
+// ─── VARIÁVEIS GLOBAIS ROTA ───────────────────────────────────
+var rotaLayer = null;
+var rotaOriginMark = null;
+var rotaDestMark = null;
+
+// ─── EVENT DELEGATION (funciona com HTML dinâmico) ────────────
+document.addEventListener('click', function(e) {
+  // Toggle grupos
+  const header = e.target.closest('[data-toggle="grupo"]');
+  if (header) {
+    const body = header.nextElementSibling;
+    const arrow = header.querySelector('.grupo-arrow');
+    if (body) body.classList.toggle('open');
+    if (arrow) arrow.classList.toggle('open');
+    return;
+  }
+
+  // Botões de rota
+  const btn = e.target.closest('.rota-btn');
+  if (btn && btn.dataset.lat) {
+    const lat = parseFloat(btn.dataset.lat);
+    const lon = parseFloat(btn.dataset.lon);
+    const mode = btn.dataset.mode;
+    const nome = btn.dataset.nome;
+    const icon = btn.dataset.icon;
+    document.querySelectorAll('.rota-btn.active-route').forEach(b => b.classList.remove('active-route'));
+    btn.classList.add('active-route');
+    doCalcRota(lat, lon, mode, nome, icon);
+    return;
+  }
+
+  // Fechar rota
+  if (e.target.closest('.rota-close')) {
+    limparRota();
+    return;
+  }
+});
+
+async function doCalcRota(destLat, destLon, mode, nome, icon) {
+  if (!window._currentOrigin) return;
+
+  limparRota();
+
+  const panel = document.getElementById('rotaInfoPanel');
+  if (panel) {
+    panel.className = 'rota-info active';
+    panel.innerHTML = '<div class="rota-header"><div class="rota-title">' + icon + ' ' + nome + '</div><button class="rota-close">✕</button></div>'
+      + '<div style="font-size:10px;color:var(--muted);padding:4px 0">A calcular rota...</div>';
+  }
+
+  const profile = mode === 'foot-walking' ? 'foot' : 'car';
+  const url = 'https://router.project-osrm.org/route/v1/' + profile + '/'
+    + window._currentOrigin[1] + ',' + window._currentOrigin[0] + ';'
+    + destLon + ',' + destLat + '?overview=full&geometries=geojson';
+
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.routes || !data.routes.length) throw new Error('sem rota');
+
+    const route = data.routes[0];
+    const distKm = (route.distance / 1000).toFixed(1);
+    const mins = Math.round(route.duration / 60);
+    const routeColor = mode === 'foot-walking' ? '#10b981' : '#a78bfa';
+    const modeIcon = mode === 'foot-walking' ? '🚶' : '🚗';
+    const modeLabel = mode === 'foot-walking' ? 'A pé' : 'De carro';
+
+    if (window._map) {
+      rotaLayer = L.geoJSON(route.geometry, {
+        style: { color: routeColor, weight: 4, opacity: 0.85, dashArray: mode === 'foot-walking' ? '8,5' : null }
+      }).addTo(window._map);
+
+      rotaOriginMark = L.marker([window._currentOrigin[0], window._currentOrigin[1]], {
+        icon: L.divIcon({ html: '<div class="rota-origin-dot"></div>', className:'', iconSize:[12,12], iconAnchor:[6,6] }),
+        zIndexOffset: 1000
+      }).addTo(window._map).bindTooltip('Partida');
+
+      rotaDestMark = L.marker([destLat, destLon], {
+        icon: L.divIcon({ html: '<div class="rota-dest-dot"></div>', className:'', iconSize:[12,12], iconAnchor:[6,6] }),
+        zIndexOffset: 1000
+      }).addTo(window._map).bindTooltip(nome);
+
+      const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
+      window._map.fitBounds(L.latLngBounds(coords), { padding: [60,60] });
+    }
+
+    if (panel) {
+      panel.innerHTML = '<div class="rota-header"><div class="rota-title">' + icon + ' ' + nome + '</div><button class="rota-close">✕</button></div>'
+        + '<div class="rota-modes"><div class="rota-mode">'
+        + '<div class="rota-mode-icon">' + modeIcon + '</div>'
+        + '<div class="rota-mode-time">' + mins + ' min</div>'
+        + '<div class="rota-mode-dist">' + distKm + ' km &middot; ' + modeLabel + '</div>'
+        + '</div></div>';
+    }
+  } catch(e) {
+    if (panel) panel.innerHTML = '<div class="rota-header"><div class="rota-title">' + icon + ' ' + nome + '</div><button class="rota-close">✕</button></div>'
+      + '<div class="no-data">Não foi possível calcular a rota.</div>';
+  }
+}
+
+function limparRota() {
+  if (rotaLayer && window._map) { window._map.removeLayer(rotaLayer); rotaLayer = null; }
+  if (rotaOriginMark && window._map) { window._map.removeLayer(rotaOriginMark); rotaOriginMark = null; }
+  if (rotaDestMark && window._map) { window._map.removeLayer(rotaDestMark); rotaDestMark = null; }
+  const panel = document.getElementById('rotaInfoPanel');
+  if (panel) panel.className = 'rota-info';
+  document.querySelectorAll('.rota-btn.active-route').forEach(b => b.classList.remove('active-route'));
+}
+
+
 window.addEventListener("load", function() {
 // ─── MAPA ─────────────────────────────────────────────────────
 const map = L.map('map', {
@@ -539,6 +625,7 @@ const map = L.map('map', {
   attributionControl: false
 });
 
+window._map = map;
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   maxZoom: 19
 }).addTo(map);
@@ -655,6 +742,7 @@ function selectEdificio(feature, layer, latlng) {
   const centroid = turf.centroid(feature);
   const pt = turf.point(centroid.geometry.coordinates);
   const [lon, lat] = centroid.geometry.coordinates;
+  window._currentOrigin = [lat, lon];
 
   // Calcular risco de cheia
   let risco = null;
@@ -760,30 +848,25 @@ function renderPanel(feature, risco, pretorno, paragens) {
     paragensHTML = '<div class="no-data" style="padding:8px 12px">Sem paragens TUB num raio de 350m</div>';
   } else {
     const sorted = paragens.sort((a,b) => (b.properties.IQSP - a.properties.IQSP)).slice(0, 8);
-    paragensHTML = `<div class="grupo-dropdown">
-      <div class="grupo-header" onclick="toggleGrupo(this)">
-        <span class="grupo-header-icon">🚌</span>
-        <span class="grupo-header-label">Paragens TUB</span>
-        <span class="grupo-header-count">${sorted.length}</span>
-        <span class="grupo-arrow open">▾</span>
-      </div>
-      <div class="grupo-body open">` +
-    sorted.map(p => {
+    const rows = sorted.map(p => {
       const pp = p.properties;
       const iqsp = (pp.IQSP * 10).toFixed(1);
-      return `<div class="paragem-item" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid rgba(42,45,53,0.5)">
-        <div style="flex:1;min-width:0">
-          <div class="paragem-nome">${pp.stop_name}</div>
-          <div class="paragem-meta">${pp.n_linhas} linhas · ${pp.perfil_temporal}</div>
-        </div>
-        <div class="iqsp-pill" style="flex-shrink:0">${iqsp}</div>
-        <div class="rota-btns">
-          <button class="rota-btn walk" onclick="calcRota(${pp.stop_lat},${pp.stop_lon},'foot-walking','${pp.stop_name.replace(/'/g,'')}','🚌',this)" title="A pé">🚶</button>
-          <button class="rota-btn" onclick="calcRota(${pp.stop_lat},${pp.stop_lon},'driving','${pp.stop_name.replace(/'/g,'')}','🚌',this)" title="De carro">🚗</button>
-        </div>
-      </div>`;
-    }).join('') +
-    `</div></div>`;
+      return '<div class="paragem-row">'
+        + '<div style="flex:1;min-width:0"><div class="paragem-nome">' + pp.stop_name + '</div>'
+        + '<div class="paragem-meta">' + pp.n_linhas + ' linhas &middot; ' + pp.perfil_temporal + '</div></div>'
+        + '<span class="iqsp-pill" style="flex-shrink:0">' + iqsp + '</span>'
+        + '<div class="rota-btns">'
+        + '<button class="rota-btn walk" data-lat="' + pp.stop_lat + '" data-lon="' + pp.stop_lon + '" data-mode="foot-walking" data-nome="' + pp.stop_name.replace(/"/g,'') + '" data-icon="🚌" title="A pé">🚶</button>'
+        + '<button class="rota-btn" data-lat="' + pp.stop_lat + '" data-lon="' + pp.stop_lon + '" data-mode="driving" data-nome="' + pp.stop_name.replace(/"/g,'') + '" data-icon="🚌" title="De carro">🚗</button>'
+        + '</div></div>';
+    }).join('');
+    paragensHTML = '<div class="grupo-dropdown">'
+      + '<div class="grupo-header" data-toggle="grupo">'
+      + '<span class="grupo-header-icon">🚌</span>'
+      + '<span class="grupo-header-label">Paragens TUB</span>'
+      + '<span class="grupo-header-count">' + sorted.length + '</span>'
+      + '<span class="grupo-arrow open">▾</span></div>'
+      + '<div class="grupo-body open">' + rows + '</div></div>';
   }
 
   document.getElementById('panelBody').innerHTML = `
@@ -976,14 +1059,11 @@ const TAG_META = {
 
 let servicosMapLayer = null;
 let routingControl = null;
-let currentOrigin = null;
-let rotaOriginMarker = null;
-let rotaDestMarker = null;
 
 async function fetchServicosOSM(lat, lon, buf500geojson) {
   const card = document.getElementById('servicosCard');
   if (!card) return;
-  currentOrigin = [lat, lon];
+  window._currentOrigin = [lat, lon];
 
   const bbox = turf.bbox(buf500geojson);
   const south = bbox[1].toFixed(6), west = bbox[0].toFixed(6);
@@ -1090,34 +1170,29 @@ out center;`;
     return;
   }
 
-  let html_out = `<div class="indicator-label" style="margin-bottom:8px">Serviços OSM · 500m <span style="color:var(--paragem)">${servicos.length} encontrados</span></div>`;
+  let html_out = '<div class="indicator-label" style="margin-bottom:8px">Serviços OSM · 500m <span style="color:var(--paragem)">' + servicos.length + ' encontrados</span></div>';
 
   for (const cat of CATEGORIAS) {
     if (!grupos[cat.key]) continue;
     const items = grupos[cat.key];
-    const isFirst = html_out.split('grupo-dropdown').length === 1;
-    html_out += `<div class="grupo-dropdown">
-      <div class="grupo-header" onclick="toggleGrupo(this)">
-        <span class="grupo-header-icon">${cat.icon}</span>
-        <span class="grupo-header-label">${cat.label}</span>
-        <span class="grupo-header-count">${items.length}</span>
-        <span class="grupo-arrow">▾</span>
-      </div>
-      <div class="grupo-body">`;
+    let rows = '';
     for (const s of items) {
-      html_out += `<div class="servico-item">
-        <div class="servico-icon">${s.icon}</div>
-        <div class="servico-info">
-          <div class="servico-nome" title="${s.nome}">${s.nome}</div>
-          <div class="servico-dist">${s.dist}m</div>
-        </div>
-        <div class="rota-btns">
-          <button class="rota-btn walk" onclick="calcRota(${s.lat},${s.lon},'foot-walking','${s.nome.replace(/'/g,"\'")}','${s.icon}',this)" title="A pé">🚶</button>
-          <button class="rota-btn" onclick="calcRota(${s.lat},${s.lon},'driving','${s.nome.replace(/'/g,"\'")}','${s.icon}',this)" title="De carro">🚗</button>
-        </div>
-      </div>`;
+      rows += '<div class="servico-item">'
+        + '<div class="servico-icon">' + s.icon + '</div>'
+        + '<div class="servico-info"><div class="servico-nome" title="' + s.nome + '">' + s.nome + '</div>'
+        + '<div class="servico-dist">' + s.dist + 'm</div></div>'
+        + '<div class="rota-btns">'
+        + '<button class="rota-btn walk" data-lat="' + s.lat + '" data-lon="' + s.lon + '" data-mode="foot-walking" data-nome="' + s.nome.replace(/"/g,'') + '" data-icon="' + s.icon + '" title="A pé">🚶</button>'
+        + '<button class="rota-btn" data-lat="' + s.lat + '" data-lon="' + s.lon + '" data-mode="driving" data-nome="' + s.nome.replace(/"/g,'') + '" data-icon="' + s.icon + '" title="De carro">🚗</button>'
+        + '</div></div>';
     }
-    html_out += `</div></div>`;
+    html_out += '<div class="grupo-dropdown">'
+      + '<div class="grupo-header" data-toggle="grupo">'
+      + '<span class="grupo-header-icon">' + cat.icon + '</span>'
+      + '<span class="grupo-header-label">' + cat.label + '</span>'
+      + '<span class="grupo-header-count">' + items.length + '</span>'
+      + '<span class="grupo-arrow">▾</span></div>'
+      + '<div class="grupo-body">' + rows + '</div></div>';
   }
 
   card.innerHTML = html_out;
@@ -1125,7 +1200,7 @@ out center;`;
 
 // ─── ROTAS OSRM ───────────────────────────────────────────────
 async function calcRota(destLat, destLon, mode, nome, icon, btn) {
-  if (!currentOrigin) return;
+  if (!window._currentOrigin) return;
 
   // Reset botões activos
   document.querySelectorAll('.rota-btn.active-route').forEach(b => b.classList.remove('active-route'));
@@ -1161,33 +1236,11 @@ async function calcRota(destLat, destLon, mode, nome, icon, btn) {
     const modeLabel = mode === 'foot-walking' ? 'A pé' : 'De carro';
     const routeColor = mode === 'foot-walking' ? '#10b981' : '#a78bfa';
 
-    // Limpar rota e marcadores anteriores
-    if (routingControl) { map.removeLayer(routingControl); routingControl = null; }
-    if (rotaOriginMarker) { map.removeLayer(rotaOriginMarker); rotaOriginMarker = null; }
-    if (rotaDestMarker) { map.removeLayer(rotaDestMarker); rotaDestMarker = null; }
-
-    // Desenhar rota
+    // Desenhar rota no mapa
+    if (routingControl) map.removeControl(routingControl);
     routingControl = L.geoJSON(route.geometry, {
-      style: { color: routeColor, weight: 4, opacity: 0.85, dashArray: mode === 'foot-walking' ? '8,5' : null }
+      style: { color: routeColor, weight: 4, opacity: 0.8, dashArray: mode === 'foot-walking' ? '6,4' : null }
     }).addTo(map);
-
-    // Marcador origem (roxo)
-    rotaOriginMarker = L.marker([currentOrigin[0], currentOrigin[1]], {
-      icon: L.divIcon({
-        html: '<div class="rota-origin-marker"></div>',
-        className: '', iconSize: [14,14], iconAnchor: [7,7]
-      }),
-      zIndexOffset: 1000
-    }).addTo(map).bindTooltip('Partida');
-
-    // Marcador destino (verde)
-    rotaDestMarker = L.marker([destLat, destLon], {
-      icon: L.divIcon({
-        html: '<div class="rota-dest-marker"></div>',
-        className: '', iconSize: [14,14], iconAnchor: [7,7]
-      }),
-      zIndexOffset: 1000
-    }).addTo(map).bindTooltip(nome);
 
     panel.innerHTML = `<div class="rota-header">
       <div class="rota-title">${icon} ${nome}</div>
@@ -1203,7 +1256,7 @@ async function calcRota(destLat, destLon, mode, nome, icon, btn) {
 
     // Centrar mapa na rota
     const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
-    map.fitBounds(L.latLngBounds(coords), { padding: [60, 60] });
+    map.fitBounds(L.latLngBounds(coords), { padding: [40, 40] });
 
   } catch(e) {
     panel.innerHTML = `<div class="rota-header">
@@ -1214,17 +1267,8 @@ async function calcRota(destLat, destLon, mode, nome, icon, btn) {
   }
 }
 
-function toggleGrupo(header) {
-  const body = header.nextElementSibling;
-  const arrow = header.querySelector('.grupo-arrow');
-  body.classList.toggle('open');
-  arrow.classList.toggle('open');
-}
-
 function limparRota() {
-  if (routingControl) { map.removeLayer(routingControl); routingControl = null; }
-  if (rotaOriginMarker) { map.removeLayer(rotaOriginMarker); rotaOriginMarker = null; }
-  if (rotaDestMarker) { map.removeLayer(rotaDestMarker); rotaDestMarker = null; }
+  if (routingControl) { map.removeControl(routingControl); routingControl = null; }
   const panel = document.getElementById('rotaInfoPanel');
   if (panel) panel.className = 'rota-info';
   document.querySelectorAll('.rota-btn.active-route').forEach(b => b.classList.remove('active-route'));
